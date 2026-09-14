@@ -1,6 +1,6 @@
 {
   "name": "@insumermodel/mppx-condition-gate",
-  "version": "3.0.2",
+  "version": "3.1.0",
   "description": "Condition-based access for mppx routes. Wallet auth via signed attestations. Six condition types: token balance, NFT ownership, EAS attestation, Farcaster ID, ratio_to_amount, ratio_to_supply.",
   "type": "module",
   "main": "dist/index.js",
@@ -45,16 +45,12 @@
     "url": "git+https://github.com/douglasborthwick-crypto/mppx-condition-gate.git"
   },
   "peerDependencies": {
-    "mppx": ">=0.1.0"
-  },
-  "peerDependenciesMeta": {
-    "mppx": {
-      "optional": true
-    }
+    "mppx": ">=0.8.14"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "mppx": "latest",
-    "typescript": "^5.7.0"
+    "mppx": "0.9.3",
+    "typescript": "^5.7.0",
+    "viem": "2.56.5"
   }
 }

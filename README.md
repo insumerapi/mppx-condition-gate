@@ -15,6 +15,8 @@ Free access requires a payer your payment method has **proven** controls the req
 5. **Pass** → free receipt returned (`reference: "condition-gate:free:{attestationId}"`)
 6. **Fail, or no proven payer** → the normal paid path runs
 
+Each credential gets free access at most once. See [Single-use credentials](#single-use-credentials) for what the gate records and the limits of that guarantee.
+
 The signed attestation is verifiable offline via [JWKS](https://insumermodel.com/.well-known/jwks.json). The adapter does not re-sign or wrap the result; the signature on the attestation is the one InsumerAPI produced. Since 2026-09-01 every attest response also carries an ML-DSA-65 post-quantum companion (`pqSig`, `pqKid`) beside `sig` and `kid`, added without changing them; the `InsumerAttestation` type declares `pqSig` and `pqKid` beside `sig` and `kid`, and `insumer-verify` 1.8.1+ reports the companion as a fifth verdict.
 
 ### Why you must supply the payer
@@ -32,18 +34,19 @@ npm install @insumermodel/mppx-condition-gate
 ## Usage
 
 ```ts
-import { Mppx, tempo } from 'mppx/server'
+import { Mppx, evm } from 'mppx/server'
 import { conditionGate } from '@insumermodel/mppx-condition-gate'
 
-const tempoCharge = tempo({
-  currency: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  recipient: '0xYourAddress',
+const evmCharge = evm.charge({
+  currency: evm.assets.base.USDC,
+  recipient: '0xYourAddress', // your checksummed receiving address
+  x402: { facilitator: 'https://your-facilitator.example' },
 })
 
-const gatedCharge = conditionGate(tempoCharge, {
+const gatedCharge = conditionGate(evmCharge, {
   apiKey: process.env.INSUMER_API_KEY,
   // Return only a payer this method has PROVEN for this request, else null.
-  // The argument is mppx's method-specific validation `details`.
+  // mppx's EVM charge reports the signer it recovered as `payer`.
   provenPayer: (details) => (details as { payer?: string }).payer ?? null,
   conditions: [{
     type: 'nft_ownership',
@@ -52,10 +55,69 @@ const gatedCharge = conditionGate(tempoCharge, {
   }],
 })
 
-const mppx = Mppx.create({ methods: [gatedCharge] })
+const mppx = Mppx.create({ methods: [gatedCharge], secretKey: process.env.MPP_SECRET_KEY })
 ```
 
-Works with any framework (Hono, Express, Elysia, Next.js) and any payment method (tempo, stripe). The adapter wraps `Method.Server`, so no middleware changes needed.
+Works with any framework (Hono, Express, Elysia, Next.js). The adapter wraps `Method.Server`, so no middleware changes needed.
+
+### Which credentials can get free access
+
+Free access needs a method that exposes mppx's `validate` hook, a resolver that returns the payer that method proved, and a credential the gate can identify. mppx added `validate` in 0.8.14 for the Tempo charge and in 0.9.3 for the EVM charge; on older versions every request pays. In mppx 0.9.3:
+
+- **EVM charge**, native and x402: EIP-3009 authorizations. The payer is the recovered signer, `details.payer`.
+- **Tempo charge, proof credentials**: the payer is `details.sender`, checked against a signature over the challenge. Tempo accepts proofs only on zero-amount challenges.
+- **Tempo hash and transaction credentials** are payments in their own right, a transfer already on chain or one waiting to be sent. They take the paid path, where the Tempo method's own replay protection applies.
+- **Stripe** exposes no `validate` hook, so it is never gated.
+
+## Single-use credentials
+
+When a payment settles, mppx spends the credential: the on-chain nonce is used, or the method records it. A free grant never settles, so the gate keeps its own record:
+
+- It records a credential when it grants free access. It also records an EIP-3009 authorization just before the paid path settles it, so a copy presented while that payment is in flight is refused.
+- A recorded credential is refused with a verification error. It is not passed on to payment, which would charge the original holder for someone else's request.
+- If settlement throws, that record is released, so the holder can retry with the same credential.
+- An EIP-3009 authorization is identified by its signer and nonce, and a Tempo proof by its challenge and payer. Neither changes when a signature is re-encoded or the challenge is rebuilt, and two users never share one. A native credential signs its challenge, so the same wallet signing the same native challenge twice (in the same millisecond, or on a route with a fixed `expires`) produces one credential, and the second is refused. x402 clients choose a fresh nonce each time.
+- A Tempo proof gets free access once, but a repeated proof is not refused, and a proof that takes the paid path is not recorded. Proofs are only accepted on zero-amount routes, which move no value, so the Tempo method and its own replay rules (its `store` option) decide whether it may be presented again.
+
+A record is kept until the credential expires, plus 60 seconds. A credential whose remaining validity is longer than `maxCredentialLifetimeSeconds` (600 by default) gets no free access and takes the paid path:
+
+- **EIP-3009 authorization:** its `validBefore`. An x402 client sets it from the route's `maxTimeoutSeconds` (300 by default), whatever the challenge expiry, but a client can sign a longer one. An x402 route whose `maxTimeoutSeconds` is above the cap gives qualifying visitors no free access unless you raise the option. A native client sets it to the challenge's `expires` (5 minutes by default), so a native route configured with an `expires` longer than the cap gives no free access unless you raise the option.
+- **Tempo proof:** the challenge's `expires`.
+
+### Limits of the guarantee
+
+Each case below allows at most one extra use of a credential:
+
+- **Settlement throws after the transfer actually happened.** The record is released, so the credential can be presented again. If its payer now meets the conditions, that presentation is free.
+- **The default store's payment records are full** (100,000 live). Later payments are not recorded, so a settled credential can come back once for free access.
+- **A caller-supplied store cannot be read or written.** The request gets no free access and pays without a record. A credential that already got free access can then be settled for a copy's request, charging its holder once, which is what bare mppx does with any credential that has not settled.
+
+Concurrent copies of one credential may each spend an attestation before one of them is granted.
+
+### The default store
+
+The default record lives in memory and is **shared by every gated route in the process**. It holds up to 100,000 live free grants, at most 5,000 per wallet, and up to 100,000 payment records. A wallet over its share, or any wallet once the free-grant capacity is full, pays instead.
+
+The default store is not a defense against someone determined to deny free access to others. Free credentials cost nothing to sign, so about 20 qualifying addresses can fill the free-grant capacity. So can one qualifying asset moved between 20 addresses, because a passing attestation is cached for `cacheTtlSeconds`. Every other qualifying visitor in that process then pays the route price until those credentials expire, up to `maxCredentialLifetimeSeconds` plus a minute. Use the default store for development and low-stakes routes.
+
+**For production traffic, or when the route runs on more than one instance, pass a shared store with its own capacity.** The store must claim atomically and remove expired entries. Options:
+
+- `Store.redis`, `Store.upstash` or `Store.cloudflare`, built from a client that exposes an atomic `update`. Confirm that your backend expires keys.
+- Any store with an atomic `tryClaim`.
+
+mppx's `Store.memory()` never removes expired entries, so use it only in tests. A store that is not atomic lets concurrent presentations through. Give the store `delete` (or `update`) so a failed payment can be released.
+
+```ts
+import { Store } from 'mppx/server'
+
+const gatedCharge = conditionGate(evmCharge, {
+  provenPayer: (details) => (details as { payer?: string }).payer ?? null,
+  conditions: [ ... ],
+  replayStore: Store.redis(atomicRedisClient), // the client must provide `update`
+})
+```
+
+Refusals are mppx's own `VerificationFailedError`, returned as HTTP 402. mppx is a peer dependency; if your install ends up with two copies of it, a refusal surfaces as an internal error (HTTP 500) instead.
 
 ## Condition types
 
@@ -182,6 +244,9 @@ Either way, set `INSUMER_API_KEY` as an environment variable in your runtime.
 | `matchMode` | `'any' \| 'all'` | `'any'` | Wallet must satisfy any or all conditions |
 | `cacheTtlSeconds` | `number` | `300` | In-memory cache TTL |
 | `apiBaseUrl` | `string` | `https://api.insumermodel.com` | API base URL override |
+| `provenPayer` | `(details) => ProvenPayer` | none | Returns the payer the method proved; required for free access |
+| `replayStore` | `AtomicStore` | bounded in-memory, per process | Records used credentials; must be atomic; share it across instances |
+| `maxCredentialLifetimeSeconds` | `number` | `600` | Longest remaining validity a credential may have and still get free access |
 
 ## Supported chains
 

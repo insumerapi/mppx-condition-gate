@@ -1,4 +1,5 @@
 import type { Method, Receipt } from 'mppx'
+import { Errors } from 'mppx'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,6 +161,44 @@ export type ConditionGateOptions = {
    * with `format: "jwt"` directly if you need the `jwt` and `pqJwt` tokens.
    */
   jwt?: boolean
+  /**
+   * Where the gate records credentials it has accepted, so each one gets
+   * through at most once. Defaults to a bounded in-process store.
+   *
+   * Pass a shared store when the route runs on more than one instance, or a
+   * credential used on one instance can be presented again on another. The
+   * store must claim atomically and remove expired entries: `Store.redis`,
+   * `Store.upstash` or `Store.cloudflare` from `mppx/server` built from a client
+   * that exposes an atomic `update`, or any store with an atomic `tryClaim`.
+   * mppx's `Store.memory()` never removes expired entries; use it only in tests.
+   */
+  replayStore?: ReplayStore
+  /**
+   * Longest remaining validity, in seconds, a credential may have and still be
+   * given free access. Defaults to 600. The gate has to remember a credential
+   * until it expires, and x402 clients choose their own expiry, so longer-lived
+   * credentials take the paid path instead.
+   */
+  maxCredentialLifetimeSeconds?: number
+}
+
+/**
+ * An atomic claim store. Structurally compatible with mppx's `AtomicStore`:
+ * `tryClaim` is used when present, otherwise `update`. `get`, when present,
+ * lets the gate refuse a repeat before spending an attestation on it, and
+ * `delete` (or `update`) lets it release a credential whose payment failed.
+ */
+export type ReplayStore = {
+  get?: (key: string) => unknown | Promise<unknown>
+  delete?: (key: string) => void | Promise<void>
+  tryClaim?: (key: string, expires: number) => boolean | Promise<boolean>
+  update?: <result>(
+    key: string,
+    fn: (current: any) =>
+      | { op: 'noop'; result: result }
+      | { op: 'set'; value: any; result: result }
+      | { op: 'delete'; result: result },
+  ) => Promise<result>
 }
 
 export type InsumerAttestation = {
@@ -232,9 +271,199 @@ function cacheKey(address: string, conditions: Condition[]): string {
   return `${address.toLowerCase()}:${JSON.stringify(sorted)}`
 }
 
-/** Clear the in-memory ownership cache. Useful in tests. */
+/** Clear the in-memory ownership cache and the default replay store. Useful in tests. */
 export function clearConditionGateCache(): void {
   cache.clear()
+  defaultMarkers.clear()
+  freeCountByOwner.clear()
+  freeCount = 0
+  paidCount = 0
+  nextSweepAt = 0
+}
+
+// ---------------------------------------------------------------------------
+// Single-use credentials
+// ---------------------------------------------------------------------------
+
+// mppx makes a credential single-use when it settles: the on-chain nonce is
+// spent, or the method claims the hash or proof in its store. `validate` is
+// non-mutating by design, so a credential that is granted free access and
+// never settled would otherwise stay usable by anyone who holds a copy.
+
+/** Kept this long past the credential's own expiry, to absorb clock skew. */
+const REPLAY_SKEW_MS = 60 * 1000
+const DEFAULT_MAX_CREDENTIAL_LIFETIME_SECONDS = 600
+/** Default store: live free grants across the process, and per wallet. */
+const DEFAULT_STORE_MAX_FREE = 100_000
+const DEFAULT_STORE_MAX_FREE_PER_WALLET = 5_000
+/** Default store: payments it remembers. Past this it stops recording payments. */
+const DEFAULT_STORE_MAX_PAID = 100_000
+const DEFAULT_STORE_SWEEP_MS = 60_000
+
+type RecordKind = 'free' | 'paid'
+type DefaultMarker = { expires: number; owner: string; kind: RecordKind }
+
+const defaultMarkers = new Map<string, DefaultMarker>()
+const freeCountByOwner = new Map<string, number>()
+let freeCount = 0
+let paidCount = 0
+let nextSweepAt = 0
+
+function forgetDefault(key: string): void {
+  const marker = defaultMarkers.get(key)
+  if (!marker) return
+  defaultMarkers.delete(key)
+  if (marker.kind === 'paid') {
+    paidCount--
+    return
+  }
+  freeCount--
+  const remaining = (freeCountByOwner.get(marker.owner) ?? 1) - 1
+  if (remaining <= 0) freeCountByOwner.delete(marker.owner)
+  else freeCountByOwner.set(marker.owner, remaining)
+}
+
+/** What the gate needs from a store. The default store and a caller's store both sit behind it. */
+type Recorder = {
+  isTaken(key: string): Promise<boolean>
+  /** true when claimed, false when already taken; throws when it cannot record. */
+  claim(key: string, expires: number, owner: string, kind: RecordKind): Promise<boolean>
+  release(key: string): Promise<void>
+}
+
+const defaultRecorder: Recorder = {
+  async isTaken(key) {
+    const marker = defaultMarkers.get(key)
+    return marker !== undefined && marker.expires > Date.now()
+  },
+  async claim(key, expires, owner, kind) {
+    const now = Date.now()
+    if (now >= nextSweepAt) {
+      for (const [k, marker] of defaultMarkers) if (marker.expires <= now) forgetDefault(k)
+      nextSweepAt = now + DEFAULT_STORE_SWEEP_MS
+    }
+    const current = defaultMarkers.get(key)
+    if (current !== undefined) {
+      if (current.expires > now) return false
+      forgetDefault(key)
+    }
+    if (kind === 'free') {
+      const held = freeCountByOwner.get(owner) ?? 0
+      if (freeCount >= DEFAULT_STORE_MAX_FREE || held >= DEFAULT_STORE_MAX_FREE_PER_WALLET) {
+        throw new Error('mppx-condition-gate: default replay store has no room for this wallet')
+      }
+      freeCount++
+      freeCountByOwner.set(owner, held + 1)
+    } else {
+      if (paidCount >= DEFAULT_STORE_MAX_PAID) {
+        throw new Error('mppx-condition-gate: default replay store is full')
+      }
+      paidCount++
+    }
+    defaultMarkers.set(key, { expires, owner, kind })
+    return true
+  },
+  async release(key) {
+    forgetDefault(key)
+  },
+}
+
+function isReplayMarker(value: unknown): value is { expires: number; type: 'mppx:replay' } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { expires?: unknown }).expires === 'number' &&
+    (value as { type?: unknown }).type === 'mppx:replay'
+  )
+}
+
+async function tryClaim(store: ReplayStore, key: string, expires: number): Promise<boolean> {
+  if (typeof store.tryClaim === 'function') return store.tryClaim(key, expires)
+  // Same marker as mppx's Store.tryClaim. A live marker, or any other stored
+  // value, counts as taken; an empty slot or an expired marker does not.
+  return store.update!(key, (current) => {
+    const empty = current === null || current === undefined || current === false
+    const taken = !empty && (!isReplayMarker(current) || current.expires > Date.now())
+    return taken
+      ? { op: 'noop', result: false }
+      : { op: 'set', value: { expires, type: 'mppx:replay' }, result: true }
+  })
+}
+
+function storeRecorder(store: ReplayStore): Recorder {
+  return {
+    async isTaken(key) {
+      // Advisory only: the atomic claim decides. Anything but a live marker reads as free.
+      if (typeof store.get !== 'function') return false
+      const current = await store.get(key)
+      return isReplayMarker(current) && current.expires > Date.now()
+    },
+    async claim(key, expires) {
+      return tryClaim(store, key, expires)
+    },
+    async release(key) {
+      if (typeof store.delete === 'function') {
+        await store.delete(key)
+        return
+      }
+      if (typeof store.update === 'function') {
+        await store.update(key, (current) =>
+          isReplayMarker(current)
+            ? { op: 'delete', result: undefined }
+            : { op: 'noop', result: undefined },
+        )
+      }
+    },
+  }
+}
+
+function lowerHex(value: unknown): string | null {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value) ? value.toLowerCase() : null
+}
+
+/**
+ * One key that identifies the credential, or null when the gate cannot
+ * identify it safely, in which case it gets no free access.
+ *
+ * - EIP-3009 authorization (mppx EVM charge, native and x402): signer + nonce.
+ *   Neither changes when the signature is re-encoded or the challenge is
+ *   rebuilt, and two users never share one.
+ * - Tempo proof: challenge id + proven payer. The proof signs the challenge
+ *   id, so it cannot be moved to another challenge.
+ *
+ * Other credential types are payments in their own right (a Tempo hash is a
+ * transfer already on chain, a Tempo transaction is one waiting to be sent),
+ * so they take the paid path, where the method's own replay protection applies.
+ */
+function credentialKey(methodName: string, credential: any, payerAddress: string): string | null {
+  const payload = credential?.payload
+  if (payload === null || typeof payload !== 'object') return null
+  let id: string | null = null
+  if (payload.type === 'authorization') {
+    const from = lowerHex(payload.from)
+    const nonce = lowerHex(payload.nonce)
+    if (from && nonce) id = `authorization:${from}:${nonce}`
+  } else if (payload.type === 'proof') {
+    const challengeId = credential?.challenge?.id
+    if (typeof challengeId === 'string' && challengeId.length > 0) {
+      id = `proof:${challengeId}:${payerAddress.toLowerCase()}`
+    }
+  }
+  return id === null ? null : `mppx-condition-gate:${methodName}:${id}`
+}
+
+/** The latest moment the credential could still be accepted, or null if unknown. */
+function credentialExpiry(credential: any): number | null {
+  const payload = credential?.payload
+  if (payload?.type === 'authorization') {
+    // An authorization is bounded by its own validBefore. For x402 the
+    // challenge is rebuilt on every request, so its expiry says nothing about
+    // the credential; a native credential's validBefore is its challenge's expiry.
+    const validBefore = Number(payload.validBefore)
+    return Number.isFinite(validBefore) && validBefore > 0 ? validBefore * 1000 : null
+  }
+  const challengeExpires = Date.parse(credential?.challenge?.expires)
+  return Number.isFinite(challengeExpires) ? challengeExpires : null
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +667,16 @@ export function normalizeProvenPayer(
  * credential that fails validation, conditions not met, or an attestation
  * error. There is no path from an unproven wallet to a free receipt.
  *
+ * Each credential gets free access at most once. The gate records a
+ * credential when it grants free access, and records an authorization just
+ * before the paid path settles it; a recorded credential is refused with a
+ * verification error rather than passed on to payment. A payment that fails is
+ * released, so it can be retried. See the README for the limits of this. Free access is given only to credentials the gate can identify
+ * (EIP-3009 authorizations and Tempo proofs) whose remaining validity is within
+ * `maxCredentialLifetimeSeconds`. The default store is bounded and shared by
+ * every gated route in the process; pass a shared `replayStore` for production
+ * traffic or when the route runs on more than one instance.
+ *
  * Conditions are evaluated across the 35 chains this adapter reaches (32 EVM +
  * Solana + XRPL + Bitcoin; the engine itself covers 38). Six condition types
  * are typed here: token_balance, nft_ownership, eas_attestation, farcaster_id,
@@ -452,8 +691,9 @@ export function normalizeProvenPayer(
  * ```ts
  * import { conditionGate } from '@insumermodel/mppx-condition-gate'
  *
- * const gated = conditionGate(tempoCharge, {
+ * const gated = conditionGate(evmCharge, {
  *   // Return only a payer this method has proven for THIS request.
+ *   // mppx's EVM charge reports the recovered signer as `payer`.
  *   provenPayer: (details) => (details as { payer?: string }).payer ?? null,
  *   conditions: [
  *     { type: 'eas_attestation', template: 'coinbase_verified_account', chainId: 8453 },
@@ -470,6 +710,21 @@ export function conditionGate(
   options: ConditionGateOptions,
 ): Method.AnyServer {
   const { conditions, matchMode = 'any', cacheTtlSeconds = 300, provenPayer } = options
+  const lifetimeSeconds = options.maxCredentialLifetimeSeconds ?? DEFAULT_MAX_CREDENTIAL_LIFETIME_SECONDS
+  if (typeof lifetimeSeconds !== 'number' || !Number.isFinite(lifetimeSeconds) || lifetimeSeconds < 0) {
+    throw new Error('mppx-condition-gate: maxCredentialLifetimeSeconds must be a finite number of seconds, 0 or more.')
+  }
+  const maxLifetimeMs = lifetimeSeconds * 1000
+
+  const { replayStore } = options
+  if (
+    replayStore !== undefined &&
+    typeof replayStore.tryClaim !== 'function' &&
+    typeof replayStore.update !== 'function'
+  ) {
+    throw new Error('mppx-condition-gate: replayStore must provide an atomic tryClaim or update (an mppx AtomicStore).')
+  }
+  const recorder = replayStore ? storeRecorder(replayStore) : defaultRecorder
 
   const anyServer = server as unknown as {
     verify: (params: any) => Promise<any>
@@ -488,9 +743,37 @@ export function conditionGate(
   const canGate =
     typeof provenPayer === 'function' && typeof originalValidate === 'function'
 
-  /** Returns a free receipt, or null to take the paid path. */
-  async function tryFree(params: any): Promise<any | null> {
-    if (!canGate) return null
+  const refuse = () =>
+    new Errors.VerificationFailedError({ reason: 'this credential has already been presented' })
+
+  /** Attestation result for a payer, from the cache or a fresh call. Throws on API error. */
+  async function evaluate(payer: { address: string; type: WalletType }) {
+    const key = cacheKey(payer.address, conditions)
+    const cached = cache.get(key)
+    if (cached && cached.expiresAt > Date.now()) return cached
+
+    const result = await callAttest(payer.address, payer.type, conditions, options)
+    const attestation = result.data.attestation
+    const pass =
+      matchMode === 'all'
+        ? attestation.pass
+        : attestation.results.some((r) => r.met)
+    const entry = {
+      pass,
+      attestationId: attestation.id,
+      expiresAt: Date.now() + cacheTtlSeconds * 1000,
+    }
+    cache.set(key, entry)
+    return entry
+  }
+
+  type Attempt =
+    | { free: true; receipt: any }
+    | { free: false; record?: { key: string; expires: number; owner: string; payment: boolean } }
+
+  /** Decides between a free receipt and the paid path. Throws to refuse a repeat. */
+  async function tryFree(params: any): Promise<Attempt> {
+    if (!canGate) return { free: false }
 
     let details: unknown
     try {
@@ -498,68 +781,124 @@ export function conditionGate(
       details = (validation as { details?: unknown } | undefined)?.details
     } catch {
       // Credential is not currently acceptable → let the payment method decide.
-      return null
+      return { free: false }
     }
 
     let resolved: ProvenPayer
     try {
       resolved = await provenPayer!(details)
     } catch {
-      return null
+      return { free: false }
     }
 
     const payer = normalizeProvenPayer(resolved)
-    if (!payer) return null
+    if (!payer) return { free: false }
 
-    const key = cacheKey(payer.address, conditions)
-    const cached = cache.get(key)
-    if (cached && cached.expiresAt > Date.now()) {
-      if (!cached.pass) return null
-      return {
+    const credential = params?.credential
+    const key = credentialKey(server.name, credential, payer.address)
+    const expiry = credentialExpiry(credential)
+    if (key === null || expiry === null) return { free: false }
+
+    const record = {
+      key,
+      owner: payer.address.toLowerCase(),
+      expires: Math.min(expiry + REPLAY_SKEW_MS, Number.MAX_SAFE_INTEGER),
+      // Only an authorization moves value; a Tempo proof is accepted on zero-amount routes.
+      payment: credential?.payload?.type === 'authorization',
+    }
+
+    // A recorded credential is refused before any attestation is spent on it.
+    let taken: boolean
+    try {
+      taken = await recorder.isTaken(key)
+    } catch {
+      return { free: false, record }
+    }
+    if (taken) {
+      // A repeated Tempo proof moves no value, so the method decides; a payment is refused.
+      if (!record.payment) return { free: false }
+      throw refuse()
+    }
+
+    if (expiry - Date.now() > maxLifetimeMs) return { free: false, record }
+
+    let evaluation: CacheEntry
+    try {
+      evaluation = await evaluate(payer)
+    } catch {
+      // Attestation error → paid path.
+      return { free: false, record }
+    }
+    if (!evaluation.pass) return { free: false, record }
+
+    let claimed: boolean
+    try {
+      claimed = await recorder.claim(key, record.expires, record.owner, 'free')
+    } catch {
+      // The store cannot record the credential, so it gets no free access.
+      return { free: false, record }
+    }
+    if (!claimed) {
+      if (!record.payment) return { free: false }
+      throw refuse()
+    }
+
+    return {
+      free: true,
+      receipt: {
         method: server.name,
-        reference: `condition-gate:free:${cached.attestationId}`,
+        reference: `condition-gate:free:${evaluation.attestationId}`,
         status: 'success' as const,
         timestamp: new Date().toISOString(),
+      },
+    }
+  }
+
+  /** Runs the gate, then the original method on the paid path. */
+  async function gated(original: (params: any) => Promise<any>, params: any) {
+    const attempt = await tryFree(params)
+    if (attempt.free) return attempt.receipt
+
+    const record = attempt.record
+    let claimed = false
+    // Only a payment is recorded on this path. A Tempo proof moves no value, so
+    // the method's own rules decide whether it may be presented again.
+    if (record && record.payment) {
+      // Claimed before settlement, so a copy presented while this payment is
+      // in flight is refused too. Kept until the credential itself expires.
+      let result: boolean | null
+      try {
+        result = await recorder.claim(record.key, record.expires, record.owner, 'paid')
+      } catch {
+        // Cannot record: pay as bare mppx would; the method's own replay protection applies.
+        result = null
       }
+      if (result === false) throw refuse()
+      claimed = result === true
     }
 
     try {
-      const result = await callAttest(payer.address, payer.type, conditions, options)
-      const attestation = result.data.attestation
-
-      const pass =
-        matchMode === 'all'
-          ? attestation.pass
-          : attestation.results.some((r) => r.met)
-
-      cache.set(key, {
-        pass,
-        attestationId: attestation.id,
-        expiresAt: Date.now() + cacheTtlSeconds * 1000,
-      })
-
-      if (!pass) return null
-      return {
-        method: server.name,
-        reference: `condition-gate:free:${attestation.id}`,
-        status: 'success' as const,
-        timestamp: new Date().toISOString(),
+      return await original(params)
+    } catch (error) {
+      // A payment that fails is released, so the holder can retry with the same credential.
+      if (claimed) {
+        try {
+          await recorder.release(record!.key)
+        } catch {
+          // Stays recorded until it expires.
+        }
       }
-    } catch {
-      // Attestation error → paid path.
-      return null
+      throw error
     }
   }
 
   const wrapped = { ...server } as unknown as Record<string, unknown>
 
   if (typeof originalBroadcast === 'function') {
-    wrapped.broadcast = async (params: any) =>
-      (await tryFree(params)) ?? originalBroadcast(params)
+    wrapped.broadcast = async (params: any) => gated(originalBroadcast, params)
   }
 
-  wrapped.verify = async (params: any) =>
-    (await tryFree(params)) ?? originalVerify(params)
+  wrapped.verify = async (params: any) => gated(originalVerify, params)
 
   return wrapped as unknown as Method.AnyServer
 }
