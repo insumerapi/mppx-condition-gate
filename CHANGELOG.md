@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.1 (2026-09-20)
+
+- Sends ratio quantities as decimal strings, as current API keys require: `multiple` and `amount` on `ratio_to_amount` and `minFraction` on `ratio_to_supply` now accept `string | number`, and a number is converted before sending.
+- Adds the exported `toDecimalString` helper, used for `threshold` as well. It writes numbers without exponent notation (`1e-7` becomes `"0.0000001"`), and a quantity that is NaN or Infinity is reported when the gate is created.
+- Updates the README examples to pass ratio quantities as strings (`'10'`, `'250'`, `'0.005'`).
+- Clarifies that `decimals` is an optional cross-check: leave it out and the token's own decimals are read from the chain. A value that differs from the token's own is rejected with a 400. The token balance example no longer sends it.
+- Aligns chain counts with the engine: 37 chains, 31 EVM; this adapter reaches 34. NFT ownership on 33. EAS conditions evaluate on Ethereum, Optimism, Polygon, Base and Arbitrum.
+- Clarifies that `"native"` is for `token_balance` and `ratio_to_amount` only; `nft_ownership` needs the NFT contract address.
+
 ## 3.1.0 (2026-09-14)
 
 - Enforces single-use free access. A free grant never settles, so it never spends the credential the way a payment does; the gate now records a credential when it grants free access, and records an authorization just before the paid path settles it, and refuses a recorded credential with a verification error instead of passing it on to payment. A payment that fails is released, so it can be retried. The README lists the limits of this guarantee.

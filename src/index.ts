@@ -10,14 +10,18 @@ export type ChainId = number | 'solana' | 'xrpl' | 'bitcoin'
 /** ERC-20 / SPL / XRPL trust-line / native balance check */
 export type TokenBalanceCondition = {
   type: 'token_balance'
-  /** Token contract address. For XRPL native XRP or Bitcoin, use "native". */
+  /** Token contract address. Use "native" for the chain's own coin: the EVM native coin
+   *  (ETH, BNB, ...), XRPL native XRP, SOL or Bitcoin. "native" is for token_balance and
+   *  ratio_to_amount only; nft_ownership needs the NFT contract address. */
   contractAddress: string
   chainId: ChainId
   /** Minimum balance in token units. Pass a decimal string (e.g. "1000") for
    *  full precision; keys minted today sign under the v2 scheme and reject a
    *  JSON number, so numbers are converted to strings before sending. Defaults to "1". */
   threshold?: number | string
-  /** Token decimals. Auto-detected on most EVM chains if omitted. */
+  /** Optional. Leave it out: the token's own decimals are always read from the chain.
+   *  If sent it is only a cross-check, and a value that differs from the token's own
+   *  decimals is rejected with a 400. */
   decimals?: number
   /** XRPL currency code (e.g. "USD", "RLUSD") for trust-line tokens. */
   currency?: string
@@ -28,6 +32,7 @@ export type TokenBalanceCondition = {
 /** ERC-721 / ERC-1155 / Solana cNFT / XRPL NFT ownership check */
 export type NftOwnershipCondition = {
   type: 'nft_ownership'
+  /** NFT contract address (0x + 40 hex on EVM). "native" is not accepted here (400). */
   contractAddress: string
   chainId: ChainId
   /** XRPL NFToken taxon filter. XRPL only. */
@@ -38,7 +43,7 @@ export type NftOwnershipCondition = {
 /** EAS attestation check (Ethereum Attestation Service) */
 export type EasAttestationCondition = {
   type: 'eas_attestation'
-  /** EVM chain ID (typically Base 8453). */
+  /** One of the five EAS chains: Ethereum (1), Optimism (10), Polygon (137), Base (8453), Arbitrum (42161). */
   chainId: number
   /**
    * Pre-configured compliance template. Mutually exclusive with schemaId.
@@ -69,29 +74,33 @@ export type FarcasterIdCondition = {
   label?: string
 }
 
-/** Self-scaling agent-spend check: met iff balance >= multiple * amount. RPC EVM chains only. */
+/** Self-scaling agent-spend check: met iff balance >= multiple * amount. EVM chains only. */
 export type RatioToAmountCondition = {
   type: 'ratio_to_amount'
   /** Token contract address, or "native" for the chain's native asset. */
   contractAddress: string
-  /** EVM chain ID (ratio conditions are RPC EVM only). */
+  /** EVM chain ID (ratio conditions are EVM only). */
   chainId: number
-  /** Collateralization multiple. Met iff balance >= multiple * amount. */
-  multiple: number
-  /** Per-request reference amount in token/display units (e.g. 100 for 100 USDC, not base units). */
-  amount: number
+  /** Collateralization multiple. Met iff balance >= multiple * amount. Pass a decimal
+   *  string (e.g. "10"); a number is converted to a decimal string before sending. */
+  multiple: string | number
+  /** Per-request reference amount in token/display units (e.g. "100" for 100 USDC, not base
+   *  units), with no more decimal places than the token has. Pass a decimal string; a number
+   *  is converted to a decimal string before sending. */
+  amount: string | number
   label?: string
 }
 
-/** Share-of-supply check: met iff balance / totalSupply() >= minFraction. RPC EVM + ERC-20 only. */
+/** Share-of-supply check: met iff balance / totalSupply() >= minFraction. EVM chains, ERC-20 only. */
 export type RatioToSupplyCondition = {
   type: 'ratio_to_supply'
   /** ERC-20 token contract address (does not accept "native"). */
   contractAddress: string
-  /** EVM chain ID (ratio conditions are RPC EVM only). */
+  /** EVM chain ID (ratio conditions are EVM only). */
   chainId: number
-  /** Required share of total supply, a fraction in (0, 1] (e.g. 0.005 for 0.5%). */
-  minFraction: number
+  /** Required share of total supply, a fraction in (0, 1] (e.g. "0.005" for 0.5%). Pass a
+   *  decimal string; a number is converted to a decimal string before sending. */
+  minFraction: string | number
   label?: string
 }
 
@@ -513,6 +522,34 @@ export function parseBitcoinDid(source: string): string | null {
 // InsumerAPI call
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns a quantity as a plain decimal string, the form the API takes for
+ * `threshold`, `multiple`, `amount` and `minFraction`.
+ *
+ * A string is returned trimmed and otherwise unchanged. A number is written
+ * without exponent notation: `String(1e-7)` is "1e-7" and `String(1e21)` is
+ * "1e+21", neither of which is a decimal string, so those are expanded to
+ * "0.0000001" and "1000000000000000000000". NaN and Infinity throw.
+ */
+export function toDecimalString(v: string | number): string {
+  if (typeof v === 'string') return v.trim()
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    throw new Error(
+      `mppx-condition-gate: a condition quantity must be a decimal string or a finite number, got ${String(v)}.`,
+    )
+  }
+  const s = String(v)
+  const m = /^(-?)(\d+)(?:\.(\d+))?e([+-])(\d+)$/i.exec(s)
+  if (!m) return s
+  const sign = m[1]
+  const digits = m[2] + (m[3] ?? '')
+  // Position of the decimal point, counted from the start of `digits`.
+  const point = m[2].length + (m[4] === '-' ? -Number(m[5]) : Number(m[5]))
+  if (point <= 0) return `${sign}0.${'0'.repeat(-point)}${digits}`
+  if (point >= digits.length) return `${sign}${digits}${'0'.repeat(point - digits.length)}`
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`
+}
+
 function buildBodyConditions(conditions: Condition[]): Array<Record<string, unknown>> {
   return conditions.map((c) => {
     if (c.type === 'farcaster_id') {
@@ -537,8 +574,8 @@ function buildBodyConditions(conditions: Condition[]): Array<Record<string, unkn
         type: c.type,
         contractAddress: c.contractAddress,
         chainId: c.chainId,
-        multiple: c.multiple,
-        amount: c.amount,
+        multiple: toDecimalString(c.multiple),
+        amount: toDecimalString(c.amount),
       }
       if (c.label) cond.label = c.label
       return cond
@@ -548,7 +585,7 @@ function buildBodyConditions(conditions: Condition[]): Array<Record<string, unkn
         type: c.type,
         contractAddress: c.contractAddress,
         chainId: c.chainId,
-        minFraction: c.minFraction,
+        minFraction: toDecimalString(c.minFraction),
       }
       if (c.label) cond.label = c.label
       return cond
@@ -561,7 +598,7 @@ function buildBodyConditions(conditions: Condition[]): Array<Record<string, unkn
     }
     if (c.type === 'token_balance') {
       const threshold = c.threshold ?? '1'
-      cond.threshold = typeof threshold === 'string' ? threshold : String(threshold)
+      cond.threshold = toDecimalString(threshold)
       if (c.decimals !== undefined) cond.decimals = c.decimals
       if (c.currency) cond.currency = c.currency
     }
@@ -677,8 +714,8 @@ export function normalizeProvenPayer(
  * every gated route in the process; pass a shared `replayStore` for production
  * traffic or when the route runs on more than one instance.
  *
- * Conditions are evaluated across the 35 chains this adapter reaches (32 EVM +
- * Solana + XRPL + Bitcoin; the engine itself covers 38). Six condition types
+ * Conditions are evaluated across the 34 chains this adapter reaches (31 EVM +
+ * Solana + XRPL + Bitcoin; the engine itself covers 37). Six condition types
  * are typed here: token_balance, nft_ownership, eas_attestation, farcaster_id,
  * ratio_to_amount, and ratio_to_supply. InsumerAPI also offers evm_view_call,
  * erc8004_agent, and erc7710_delegation; those are not typed or normalized
@@ -715,6 +752,10 @@ export function conditionGate(
     throw new Error('mppx-condition-gate: maxCredentialLifetimeSeconds must be a finite number of seconds, 0 or more.')
   }
   const maxLifetimeMs = lifetimeSeconds * 1000
+
+  // Build the request conditions once up front, so a quantity that is not a
+  // finite number is reported here instead of sending every request to the paid path.
+  if (Array.isArray(conditions)) buildBodyConditions(conditions)
 
   const { replayStore } = options
   if (

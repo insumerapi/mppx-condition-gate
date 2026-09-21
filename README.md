@@ -131,7 +131,6 @@ Mix any of the six in a single call. `matchMode: 'any'` (default) passes when an
   contractAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
   chainId: 1,
   threshold: '1000', // decimal string in token units; numbers are converted before sending
-  decimals: 6,
   label: 'USDC >= 1000',
 }
 ```
@@ -186,29 +185,29 @@ Always evaluated on Optimism (chain 10). Passes if the wallet has any FID regist
 
 ### Ratio to amount
 
-Self-scaling spend rule: passes when the wallet holds at least `multiple` times a per-request `amount`. RPC EVM chains only.
+Self-scaling spend rule: passes when the wallet holds at least `multiple` times a per-request `amount`. EVM chains only. `multiple` and `amount` go to the API as decimal strings; pass strings, and a number is converted before sending.
 
 ```ts
 {
   type: 'ratio_to_amount',
   contractAddress: 'native', // or an ERC-20 address
   chainId: 8453,
-  multiple: 10,
-  amount: 250,
+  multiple: '10',
+  amount: '250', // token units, as a decimal string
   label: 'Holds >= 10x the 250-unit spend',
 }
 ```
 
 ### Ratio to supply
 
-Share-of-supply rule: passes when the wallet holds at least `minFraction` of the token's on-chain total supply. For project/governance tokens, not stablecoins. RPC EVM chains, ERC-20 contracts only.
+Share-of-supply rule: passes when the wallet holds at least `minFraction` of the token's on-chain total supply. For project/governance tokens, not stablecoins. EVM chains, ERC-20 contracts only. `minFraction` goes to the API as a decimal string.
 
 ```ts
 {
   type: 'ratio_to_supply',
   contractAddress: '0x1f9840a85d5aF5bf1D1762F925BdADdC4201F984', // UNI
   chainId: 1,
-  minFraction: 0.005, // 0.5% of supply
+  minFraction: '0.005', // 0.5% of supply
   label: 'Holds >= 0.5% of UNI supply',
 }
 ```
@@ -250,7 +249,7 @@ Either way, set `INSUMER_API_KEY` as an environment variable in your runtime.
 
 ## Supported chains
 
-32 EVM chains (Ethereum, Base, Polygon, Arbitrum, Optimism, BNB, Avalanche, Robinhood Chain, and 24 more) + Solana + XRPL + Bitcoin — the 35 chains this adapter's wallet handling reaches. The engine itself covers 38 (adding Tron, Stellar, and Sui via InsumerAPI directly). EAS conditions evaluate on EVM chains only. Farcaster always on Optimism.
+31 EVM chains (Ethereum, Base, Polygon, Arbitrum, Optimism, BNB, Avalanche, Robinhood Chain, and 23 more) + Solana + XRPL + Bitcoin: the 34 chains this adapter's wallet handling reaches. The engine itself covers 37 (adding Tron, Stellar, and Sui via InsumerAPI directly). NFT ownership evaluates on the 31 EVM chains, Solana and XRPL. EAS conditions evaluate on five chains: Ethereum, Optimism, Polygon, Base and Arbitrum. Farcaster always on Optimism.
 
 [Full chain list](https://insumermodel.com/developers/api-reference/)
 
@@ -269,7 +268,7 @@ if (receipt.reference.startsWith('condition-gate:free:')) {
 }
 ```
 
-## Fail-open behavior
+## When the API is unreachable
 
 If the attestation API is unreachable, the adapter falls through to the original payment method. Wallets that would have qualified for free access pay normally; everyone else is unaffected.
 

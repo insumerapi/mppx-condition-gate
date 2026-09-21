@@ -54,7 +54,6 @@ const gated = conditionGate(mockServer, {
     contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
     chainId: 8453,
     threshold: 0.000001, // prove-any-balance per /v1/attest spec
-    decimals: 6,
     label: 'USDC on Base > 0',
   }],
 })
@@ -86,7 +85,6 @@ const gated2 = conditionGate(mockServer, {
     contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     chainId: 8453,
     threshold: 999999999,
-    decimals: 6,
     label: 'USDC on Base >= 999999999',
   }],
 })
