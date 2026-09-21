@@ -230,7 +230,7 @@ curl -X POST https://api.insumermodel.com/v1/keys/create \
 
 Either way, set `INSUMER_API_KEY` as an environment variable in your runtime.
 
-**Top up** an existing key on-chain via `POST /v1/credits/buy`. Accepted: USDC or USDT on any major EVM chain, USDC on Solana, or BTC on Bitcoin. See the [credits endpoint](https://insumermodel.com/developers/api-reference/) for transaction format.
+**Top up** an existing key on-chain via `POST /v1/credits/buy`. Accepted: USDC or USDT on Ethereum (1), Base (8453), Polygon (137), Arbitrum (42161), Optimism (10), BNB Chain (56), or Avalanche (43114); USDC or USDT on Solana; BTC on Bitcoin; or USDT (TRC-20) on Tron. See the [credits endpoint](https://insumermodel.com/developers/api-reference/) for transaction format.
 
 **Pricing model**: the wallet holder pays nothing at the gated route. The operator running the gate pays per attestation call out of the key's credit balance. Cost per attestation depends on tier and condition mix.
 

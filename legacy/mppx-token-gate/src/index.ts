@@ -16,7 +16,7 @@ export type TokenCondition = {
   type: 'token_balance' | 'nft_ownership'
   /** Minimum balance for token_balance conditions. Defaults to 1. */
   threshold?: number
-  /** Token decimals (auto-detected on most EVM chains if omitted). */
+  /** Optional cross-check: the token's own decimals are always read from the chain, and a differing value is rejected. Best left out. */
   decimals?: number
   /** Human-readable label (max 100 chars). */
   label?: string
@@ -183,7 +183,8 @@ async function callAttest(
         chainId: c.chainId,
       }
       if (c.type === 'token_balance') {
-        cond.threshold = c.threshold ?? 1
+        // Current API keys require the threshold as a decimal string.
+        cond.threshold = String(c.threshold ?? 1)
       }
       if (c.decimals !== undefined) cond.decimals = c.decimals
       if (c.label) cond.label = c.label
