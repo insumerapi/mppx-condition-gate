@@ -42,7 +42,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/douglasborthwick-crypto/mppx-condition-gate.git"
+    "url": "git+https://github.com/insumerapi/mppx-condition-gate.git"
   },
   "peerDependencies": {
     "mppx": ">=0.8.14"

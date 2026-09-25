@@ -21,7 +21,7 @@ The signed attestation is verifiable offline via [JWKS](https://insumermodel.com
 
 ### Why you must supply the payer
 
-mppx credentials carry an optional `source` DID, but mppx documents it as *"an asserted identity, not independent proof of control"* — it is a claim by the caller, not a proof. Versions before 3.0.0 granted free access on it, which let anyone name a qualifying wallet and skip payment ([GHSA-jg6q-3qfh-r9f8](https://github.com/douglasborthwick-crypto/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8)). The gate now refuses to guess.
+mppx credentials carry an optional `source` DID, but mppx documents it as *"an asserted identity, not independent proof of control"* — it is a claim by the caller, not a proof. Versions before 3.0.0 granted free access on it, which let anyone name a qualifying wallet and skip payment ([GHSA-jg6q-3qfh-r9f8](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8)). The gate now refuses to guess.
 
 `provenPayer` receives **only** the validation `details` — never the credential and never `source` — so the unproven identity is not reachable from it. Return a payer only if the payment method has actually established control of it. **Every path that cannot justify free access falls through to payment:** no resolver, no `validate` hook on the method, a resolver returning `null` or throwing, a credential that fails validation, conditions not met, or an attestation error.
 
@@ -300,7 +300,7 @@ The `parsXrplDid` typo from v1 is fixed: use `parseXrplDid`. The cache helper re
 
 ## Migrating from 2.x (security release)
 
-3.0.0 fixes an authentication bypass ([GHSA-jg6q-3qfh-r9f8](https://github.com/douglasborthwick-crypto/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8)). All 2.x versions, and all versions of the predecessor `@insumermodel/mppx-token-gate`, are affected.
+3.0.0 fixes an authentication bypass ([GHSA-jg6q-3qfh-r9f8](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8)). All 2.x versions, and all versions of the predecessor `@insumermodel/mppx-token-gate`, are affected.
 
 Add a `provenPayer` resolver:
 
