@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.2 (2026-10-02)
+
+- Package metadata and README links point to the repository's current home, github.com/insumerapi/mppx-condition-gate. Adds the MIT license file to the package. No code changes.
+
 ## 3.1.1 (2026-09-20)
 
 - Sends ratio quantities as decimal strings, as current API keys require: `multiple` and `amount` on `ratio_to_amount` and `minFraction` on `ratio_to_supply` now accept `string | number`, and a number is converted before sending.
