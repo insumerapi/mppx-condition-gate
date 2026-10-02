@@ -8,7 +8,7 @@
 
 Versions 1.0.0 through 1.0.3 granted free access based on the payer address in `credential.source`. That value is supplied by the caller, and mppx documents it as *"an asserted identity, not independent proof of control"*. Nothing in the gate established that the caller controlled the wallet it named — and because qualifying wallets are public chain state, there was nothing to guess. Anyone could name a qualifying wallet and skip payment.
 
-Tracked as [GHSA-jg6q-3qfh-r9f8](https://github.com/douglasborthwick-crypto/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8).
+Tracked as [GHSA-jg6q-3qfh-r9f8](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8).
 
 ## Why the grant was removed rather than repaired
 
