@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.3 (2026-10-04)
+
+- Enhances the README: mppx reports a free grant through its `payment.success` event, so a server that counts payments from that event should check for the `condition-gate:free:` receipt reference. Adds an end-to-end test for it.
+- Runs the tests on mppx 0.13.1 and viem 2.57.2 (dev dependencies). No code changes; the `mppx` peer range is unchanged.
+
 ## 3.1.2 (2026-10-02)
 
 - Package metadata and README links point to the repository's current home, github.com/insumerapi/mppx-condition-gate. Adds the MIT license file to the package. No code changes.
