@@ -63,7 +63,7 @@ function route({ gated = true, chain = new Set(), failSettleOnce = false, x402Ma
     const r = await mppx.charge({ amount: '0.01', ...(expires ? { expires } : {}) })(new Request(URL_, { headers }))
     return r.status === 402 ? { status: 402, challenge: r.challenge } : { status: 200 }
   }
-  return { handle, counters }
+  return { handle, counters, mppx }
 }
 
 function wallet() {
@@ -172,4 +172,20 @@ test('a native route whose challenges outlive the lifetime cap pays instead', as
   const headers = await w.native((await r.handle()).challenge)
   assert.deepEqual(await statuses(r.handle, headers, 2), [200, 402])
   assert.equal(r.counters.settles, 1, 'paid, not free')
+})
+
+test('mppx reports a free grant as payment.success, told apart by its receipt reference', async () => {
+  const r = route()
+  const references = []
+  r.mppx.onPaymentSuccess(({ receipt }) => { references.push(receipt.reference) })
+
+  const free = wallet()
+  free.qualify()
+  assert.equal((await r.handle(await free.native((await r.handle()).challenge))).status, 200)
+
+  const paying = wallet()
+  assert.equal((await r.handle(await paying.native((await r.handle()).challenge))).status, 200)
+
+  assert.deepEqual(references, ['condition-gate:free:ATST-IT', '0xsettled'])
+  assert.equal(r.counters.settles, 1)
 })

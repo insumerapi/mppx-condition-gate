@@ -49,8 +49,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "mppx": "0.9.3",
+    "mppx": "0.13.1",
     "typescript": "^5.7.0",
-    "viem": "2.56.5"
+    "viem": "2.57.2"
   }
 }

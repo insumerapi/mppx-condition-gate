@@ -268,6 +268,15 @@ if (receipt.reference.startsWith('condition-gate:free:')) {
 }
 ```
 
+The same check applies on the server. mppx reports a free grant through its `payment.success` event (`onPaymentSuccess`), because the gate returns a successful receipt. If you count revenue or log payments from that event, read `receipt.reference` first: a reference starting with `condition-gate:free:` means access was granted and no money moved.
+
+```ts
+mppx.onPaymentSuccess(({ receipt }) => {
+  if (receipt.reference.startsWith('condition-gate:free:')) return // free access, nothing settled
+  recordPayment(receipt)
+})
+```
+
 ## When the API is unreachable
 
 If the attestation API is unreachable, the adapter falls through to the original payment method. Wallets that would have qualified for free access pay normally; everyone else is unaffected.
