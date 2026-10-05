@@ -23,13 +23,13 @@ export type TokenBalanceCondition = {
    *  If sent it is only a cross-check, and a value that differs from the token's own
    *  decimals is rejected with a 400. */
   decimals?: number
-  /** XRPL currency code (e.g. "USD", "RLUSD") for trust-line tokens. */
+  /** XRPL currency code (e.g. "USD", "RLUSD") for trust-line tokens. Case-sensitive: sent exactly as given. */
   currency?: string
   /** Human-readable label (max 100 chars). */
   label?: string
 }
 
-/** ERC-721 / ERC-1155 / Solana cNFT / XRPL NFT ownership check */
+/** ERC-721 / Solana NFT / XRPL NFT ownership check */
 export type NftOwnershipCondition = {
   type: 'nft_ownership'
   /** NFT contract address (0x + 40 hex on EVM). "native" is not accepted here (400). */

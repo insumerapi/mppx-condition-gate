@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.4 (2026-10-05)
+
+- Corrects the doc comment on `NftOwnershipCondition`: on EVM chains `nft_ownership` reads ERC-721 style contracts, so ERC-1155 is no longer listed. The published type declarations follow.
+- Notes on `currency` that XRPL currency codes are case-sensitive and are sent exactly as given. No code changes.
+
 ## 3.1.3 (2026-10-04)
 
 - Enhances the README: mppx reports a free grant through its `payment.success` event, so a server that counts payments from that event should check for the `condition-gate:free:` receipt reference. Adds an end-to-end test for it.
