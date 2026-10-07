@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.0 (2026-10-07)
+
+- Adds the `account_code` condition type (`AccountCodeCondition`), the seventh typed here: `{ type: 'account_code', chainId: <EVM id>, expect: 'none' | 'eip7702' | 'contract' }` checks the code state of the wallet address itself at the anchored block (a plain key account, the EIP-7702 delegation designator, or any other code). With `expect: 'eip7702'` an optional `delegate` address is met only when the designator points at it. The result is the boolean `met`; the code and the delegation target are never returned. EVM chains only. The gate sends `chainId`, `expect`, `delegate` and `label` for this type, and keys its cache on them. The published type declarations follow.
+
 ## 3.1.4 (2026-10-05)
 
 - Corrects the doc comment on `NftOwnershipCondition`: on EVM chains `nft_ownership` reads ERC-721 style contracts, so ERC-1155 is no longer listed. The published type declarations follow.

@@ -1,6 +1,6 @@
 # @insumermodel/mppx-condition-gate
 
-Condition-based access for [mppx](https://github.com/wevm/mppx) routes. One signed call between request and charge gives free access to wallets that meet your conditions; everyone else falls through to the normal paid path. Six condition types: token balance, NFT ownership, EAS attestation, Farcaster ID, plus ratio_to_amount (hold >= N x a spend amount) and ratio_to_supply (hold >= a fraction of token supply). No RPC management.
+Condition-based access for [mppx](https://github.com/wevm/mppx) routes. One signed call between request and charge gives free access to wallets that meet your conditions; everyone else falls through to the normal paid path. Seven condition types: token balance, NFT ownership, EAS attestation, Farcaster ID, account code, plus ratio_to_amount (hold >= N x a spend amount) and ratio_to_supply (hold >= a fraction of token supply). No RPC management.
 
 > **Migrating from `@insumermodel/mppx-token-gate`?** This is the v2 successor. See [Migration](#migrating-from-mppx-token-gate) below.
 
@@ -121,7 +121,7 @@ Refusals are mppx's own `VerificationFailedError`, returned as HTTP 402. mppx is
 
 ## Condition types
 
-Mix any of the six in a single call. `matchMode: 'any'` (default) passes when any one is met; `matchMode: 'all'` requires all of them.
+Mix any of the seven in a single call. `matchMode: 'any'` (default) passes when any one is met; `matchMode: 'all'` requires all of them.
 
 ### Token balance
 
@@ -182,6 +182,14 @@ Available templates: `coinbase_verified_account`, `coinbase_verified_country`, `
 ```
 
 Always evaluated on Optimism (chain 10). Passes if the wallet has any FID registered.
+
+### Account code
+
+```ts
+{ type: 'account_code', chainId: 8453, expect: 'eip7702', label: 'Delegated key on Base' }
+```
+
+What code sits at the payer's address itself, at the anchored block. `expect` is `'none'` (no code: a plain key), `'eip7702'` (the EIP-7702 delegation designator: a key that delegated execution) or `'contract'` (any other code: a smart-contract wallet, a protocol). The three are exclusive on a chain. With `expect: 'eip7702'` an optional `delegate` (an EVM address) requires the designator to point at that address. EVM chains only. The answer is the boolean; the code and the delegation target are never returned.
 
 ### Ratio to amount
 

@@ -104,6 +104,27 @@ export type RatioToSupplyCondition = {
   label?: string
 }
 
+/** Account code check: the code state of the wallet address itself at the anchored block. EVM chains only. */
+export type AccountCodeCondition = {
+  type: 'account_code'
+  /** EVM chain ID (any of the 31 EVM chains). A non-EVM chainId is rejected with a 400. */
+  chainId: number
+  /**
+   * The code state the wallet address itself must be in at the anchored block. Required.
+   * "none" = no code (a plain key account); "eip7702" = the EIP-7702 delegation designator
+   * (a key that has delegated execution to a contract); "contract" = any other code (a
+   * smart-contract wallet, a protocol, a token). Exclusive on a chain. The result is the
+   * boolean met; the code and the delegation target are never returned.
+   */
+  expect: 'none' | 'eip7702' | 'contract'
+  /**
+   * Only with expect "eip7702" (a 400 with any other expect): an EVM address; met iff the
+   * designator points at it. Echoed, lowercase, inside the signed evaluatedCondition.
+   */
+  delegate?: string
+  label?: string
+}
+
 /** Any condition accepted by /v1/attest */
 export type Condition =
   | TokenBalanceCondition
@@ -112,6 +133,7 @@ export type Condition =
   | FarcasterIdCondition
   | RatioToAmountCondition
   | RatioToSupplyCondition
+  | AccountCodeCondition
 
 /** Wallet family for a proven payer. */
 export type WalletType = 'evm' | 'solana' | 'xrpl' | 'bitcoin'
@@ -152,7 +174,7 @@ export type ConditionGateOptions = {
    * ```
    */
   provenPayer?: (details: unknown) => ProvenPayer | Promise<ProvenPayer>
-  /** One or more conditions to evaluate. Mix any of the six types. */
+  /** One or more conditions to evaluate. Mix any of the seven types. */
   conditions: Condition[]
   /** Whether the wallet must satisfy "any" (default) or "all" conditions. */
   matchMode?: 'any' | 'all'
@@ -267,6 +289,9 @@ function conditionSortKey(c: Condition): string {
   if (c.type === 'farcaster_id') return 'farcaster_id'
   if (c.type === 'eas_attestation') {
     return `eas:${c.chainId}:${(c.schemaId || c.template || '').toLowerCase()}`
+  }
+  if (c.type === 'account_code') {
+    return `account_code:${c.chainId}:${c.expect}:${(c.delegate || '').toLowerCase()}`
   }
   return `${c.type}:${c.chainId}:${c.contractAddress.toLowerCase()}`
 }
@@ -590,6 +615,16 @@ function buildBodyConditions(conditions: Condition[]): Array<Record<string, unkn
       if (c.label) cond.label = c.label
       return cond
     }
+    if (c.type === 'account_code') {
+      const cond: Record<string, unknown> = {
+        type: c.type,
+        chainId: c.chainId,
+        expect: c.expect,
+      }
+      if (c.delegate) cond.delegate = c.delegate
+      if (c.label) cond.label = c.label
+      return cond
+    }
     // token_balance or nft_ownership
     const cond: Record<string, unknown> = {
       type: c.type,
@@ -715,11 +750,13 @@ export function normalizeProvenPayer(
  * traffic or when the route runs on more than one instance.
  *
  * Conditions are evaluated across the 34 chains this adapter reaches (31 EVM +
- * Solana + XRPL + Bitcoin; the engine itself covers 37). Six condition types
+ * Solana + XRPL + Bitcoin; the engine itself covers 37). Seven condition types
  * are typed here: token_balance, nft_ownership, eas_attestation, farcaster_id,
- * ratio_to_amount, and ratio_to_supply. InsumerAPI also offers evm_view_call,
- * erc8004_agent, and erc7710_delegation; those are not typed or normalized
- * here, so call /v1/attest directly if you need them.
+ * ratio_to_amount, ratio_to_supply, and account_code (the code state of the
+ * wallet address itself: a plain key, an EIP-7702 delegation, or contract
+ * code; EVM chains only). InsumerAPI also offers evm_view_call, erc8004_agent,
+ * and erc7710_delegation; those are not typed or normalized here, so call
+ * /v1/attest directly if you need them.
  *
  * The attestation is ECDSA P-256 signed and verifiable offline via the public
  * JWKS at https://insumermodel.com/.well-known/jwks.json.
