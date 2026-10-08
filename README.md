@@ -17,7 +17,7 @@ Free access requires a payer your payment method has **proven** controls the req
 
 Each credential gets free access at most once. See [Single-use credentials](#single-use-credentials) for what the gate records and the limits of that guarantee.
 
-The signed attestation is verifiable offline via [JWKS](https://insumermodel.com/.well-known/jwks.json). The adapter does not re-sign or wrap the result; the signature on the attestation is the one InsumerAPI produced. Since 2026-09-01 every attest response also carries an ML-DSA-65 post-quantum companion (`pqSig`, `pqKid`) beside `sig` and `kid`, added without changing them; the `InsumerAttestation` type declares `pqSig` and `pqKid` beside `sig` and `kid`, and `insumer-verify` 1.8.1+ reports the companion as a fifth verdict.
+The signed attestation is verifiable offline via [JWKS](https://insumermodel.com/.well-known/jwks.json). The adapter does not re-sign or wrap the result; the signature on the attestation is the one InsumerAPI produced. Every attest response is signed twice: ES256 and a post-quantum ML-DSA-65 signature (`pqSig`, `pqKid`), carried beside `sig` and `kid` without changing them; the `InsumerAttestation` type declares `pqSig` and `pqKid` beside `sig` and `kid`, and `insumer-verify` 1.8.1+ reports the post-quantum signature as a fifth verdict.
 
 ### Why you must supply the payer
 

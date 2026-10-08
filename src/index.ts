@@ -258,7 +258,7 @@ export type InsumerAttestation = {
     }
     sig: string
     kid: string
-    /** ML-DSA-65 post-quantum companion signature (since 2026-09-01, additive). */
+    /** ML-DSA-65 post-quantum signature, beside sig (additive). */
     pqSig?: string
     /** Post-quantum key id, insumer-attest-pq1 (resolved in the JWKS as an RFC 9964 AKP entry). */
     pqKid?: string
