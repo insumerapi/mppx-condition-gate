@@ -1,5 +1,7 @@
 # @insumermodel/mppx-condition-gate
 
+[![npm](https://img.shields.io/npm/v/@insumermodel/mppx-condition-gate)](https://www.npmjs.com/package/@insumermodel/mppx-condition-gate) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/insumerapi/mppx-condition-gate/blob/main/LICENSE)
+
 Condition-based access for [mppx](https://github.com/wevm/mppx) routes. One signed call between request and charge gives free access to wallets that meet your conditions; everyone else falls through to the normal paid path. Seven condition types: token balance, NFT ownership, EAS attestation, Farcaster ID, account code, plus ratio_to_amount (hold >= N x a spend amount) and ratio_to_supply (hold >= a fraction of token supply). No RPC management.
 
 > **Migrating from `@insumermodel/mppx-token-gate`?** This is the v2 successor. See [Migration](#migrating-from-mppx-token-gate) below.
@@ -21,9 +23,9 @@ The signed attestation is verifiable offline via [JWKS](https://insumermodel.com
 
 ### Why you must supply the payer
 
-mppx credentials carry an optional `source` DID, but mppx documents it as *"an asserted identity, not independent proof of control"* — it is a claim by the caller, not a proof. Versions before 3.0.0 granted free access on it, which let anyone name a qualifying wallet and skip payment ([GHSA-jg6q-3qfh-r9f8](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8)). The gate now refuses to guess.
+mppx credentials carry an optional `source` DID, but mppx documents it as *"an asserted identity, not independent proof of control"*: it is a claim by the caller, not a proof. Versions before 3.0.0 granted free access on it, which let anyone name a qualifying wallet and skip payment ([GHSA-jg6q-3qfh-r9f8](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jg6q-3qfh-r9f8)). The gate now refuses to guess.
 
-`provenPayer` receives **only** the validation `details` — never the credential and never `source` — so the unproven identity is not reachable from it. Return a payer only if the payment method has actually established control of it. **Every path that cannot justify free access falls through to payment:** no resolver, no `validate` hook on the method, a resolver returning `null` or throwing, a credential that fails validation, conditions not met, or an attestation error.
+`provenPayer` receives **only** the validation `details` (never the credential and never `source`), so the unproven identity is not reachable from it. Return a payer only if the payment method has actually established control of it. **Every path that cannot justify free access falls through to payment:** no resolver, no `validate` hook on the method, a resolver returning `null` or throwing, a credential that fails validation, conditions not met, or an attestation error.
 
 ## Install
 
@@ -234,7 +236,7 @@ curl -X POST https://api.insumermodel.com/v1/keys/create \
   -d '{"email":"you@example.com","appName":"my-app","tier":"free"}'
 ```
 
-**On-chain** (autonomous agent bootstrap): send USDC, USDT, or BTC to the platform wallet, then call `POST /v1/keys/buy` with the transaction hash. The transaction sender wallet is the identity, the payment is the auth — no email, no human in the loop.
+**On-chain** (autonomous agent bootstrap): send USDC, USDT, or BTC to the platform wallet, then call `POST /v1/keys/buy` with the transaction hash. The transaction sender wallet is the identity, the payment is the auth. No email, no human in the loop.
 
 Either way, set `INSUMER_API_KEY` as an environment variable in your runtime.
 
@@ -329,7 +331,7 @@ Add a `provenPayer` resolver:
   })
 ```
 
-Without it the gate compiles and runs, but never grants free access — every request takes the paid path. That is deliberate: the insecure default is gone, and the safe default is to charge.
+Without it the gate compiles and runs, but never grants free access: every request takes the paid path. That is deliberate: the insecure default is gone, and the safe default is to charge.
 
 Your method must expose mppx's `validate` hook. Legacy `verify`-only methods have no non-mutating pre-check, so they are never gated.
 
