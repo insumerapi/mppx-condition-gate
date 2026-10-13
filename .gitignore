@@ -7,3 +7,4 @@ dist/
 .env.local
 legacy/*/node_modules
 legacy/*/dist
+legacy/*/package-lock.json
