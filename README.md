@@ -236,11 +236,11 @@ curl -X POST https://api.insumermodel.com/v1/keys/create \
   -d '{"email":"you@example.com","appName":"my-app","tier":"free"}'
 ```
 
-**On-chain** (autonomous agent bootstrap): send USDC, USDT, or BTC to the platform wallet, then call `POST /v1/keys/buy` with the transaction hash. The transaction sender wallet is the identity, the payment is the auth. No email, no human in the loop.
+**On-chain** (autonomous agent bootstrap): send USDC to the platform wallet, then call `POST /v1/keys/buy` with the transaction hash and `senderSignature`, the paying wallet's signature over a short text naming the payment (a call without it returns the exact text). The wallet that paid is the identity. No email, no human in the loop.
 
 Either way, set `INSUMER_API_KEY` as an environment variable in your runtime.
 
-**Top up** an existing key on-chain via `POST /v1/credits/buy`. Accepted: USDC or USDT on Ethereum (1), Base (8453), Polygon (137), Arbitrum (42161), Optimism (10), BNB Chain (56), or Avalanche (43114); USDC or USDT on Solana; BTC on Bitcoin; or USDT (TRC-20) on Tron. See the [credits endpoint](https://insumermodel.com/developers/api-reference/) for transaction format.
+**Top up** an existing key on-chain via `POST /v1/credits/buy`. Accepted: USDC only, on Ethereum (1), Base (8453), Polygon (137), Arbitrum (42161), Optimism (10), BNB Chain (56), Avalanche (43114) or Solana. A first top-up, or one that changes the registered wallet, also carries `senderSignature`. See the [credits endpoint](https://insumermodel.com/developers/api-reference/) for the request format.
 
 **Pricing model**: the wallet holder pays nothing at the gated route. The operator running the gate pays per attestation call out of the key's credit balance. Cost per attestation depends on tier and condition mix.
 

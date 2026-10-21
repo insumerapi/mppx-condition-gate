@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.1 (2026-10-21)
+
+- README: on-chain key purchases and top-ups are USDC only (Ethereum, Base, Polygon, Arbitrum, Optimism, BNB Chain, Avalanche, Solana), and the paying wallet signs a short text naming the payment (`senderSignature`). USDT, Bitcoin and Tron are no longer accepted for purchases.
+- Ships the documentation changes made since 3.2.0: the post-quantum signature named as such (signed twice: ES256 and ML-DSA-65) in the README and a type comment, version and license badges, plain punctuation. No code changes.
+
 ## 3.2.0 (2026-10-07)
 
 - Adds the `account_code` condition type (`AccountCodeCondition`), the seventh typed here: `{ type: 'account_code', chainId: <EVM id>, expect: 'none' | 'eip7702' | 'contract' }` checks the code state of the wallet address itself at the anchored block (a plain key account, the EIP-7702 delegation designator, or any other code). With `expect: 'eip7702'` an optional `delegate` address is met only when the designator points at it. The result is the boolean `met`; the code and the delegation target are never returned. EVM chains only. The gate sends `chainId`, `expect`, `delegate` and `label` for this type, and keys its cache on them. The published type declarations follow.
