@@ -280,7 +280,8 @@ export type InsumerAttestation = {
 type CacheEntry = {
   pass: boolean
   attestationId: string
-  expiresAt: number
+  /** When the attestation was made (ms). Each route judges freshness by its own cacheTtlSeconds. */
+  checkedAt: number
 }
 
 const cache = new Map<string, CacheEntry>()
@@ -841,8 +842,14 @@ export function conditionGate(
   /** Attestation result for a payer, from the cache or a fresh call. Throws on API error. */
   async function evaluate(payer: { address: string; type: WalletType }) {
     const key = cacheKey(payer, conditions, matchMode, options.apiBaseUrl || 'https://api.insumermodel.com')
-    const cached = cache.get(key)
-    if (cached && cached.expiresAt > Date.now()) return cached
+    // The cache is shared by every route, so freshness is this route's own call:
+    // an entry counts only while it is younger than this route's cacheTtlSeconds,
+    // whatever lifetime the route that wrote it uses. A TTL of 0 never reads it.
+    const ttlMs = cacheTtlSeconds * 1000
+    if (ttlMs > 0) {
+      const cached = cache.get(key)
+      if (cached && Date.now() - cached.checkedAt < ttlMs) return cached
+    }
 
     const result = await callAttest(payer.address, payer.type, conditions, options)
     const attestation = result.data.attestation
@@ -853,7 +860,7 @@ export function conditionGate(
     const entry = {
       pass,
       attestationId: attestation.id,
-      expiresAt: Date.now() + cacheTtlSeconds * 1000,
+      checkedAt: Date.now(),
     }
     cache.set(key, entry)
     return entry

@@ -647,6 +647,39 @@ test('routes on different apiBaseUrl values do not share an entry', async () => 
   assert.ok(seen.urls[1].startsWith('https://b.example/'))
 })
 
+test('REGRESSION: a pass cached by a long-TTL route is not used by a route with cacheTtlSeconds 0', async () => {
+  const seen = stubPartial()
+  const loose = gateWith(makeServer().server, { matchMode: 'any', cacheTtlSeconds: 3600 })
+  assert.ok(free(await loose.verify({ credential: cred() })), 'the long-TTL route caches a pass')
+
+  // Wallet state changes: the next attestation fails.
+  globalThis.fetch = async (url, init) => {
+    seen.calls++
+    return { ok: true, status: 200, json: async () => ({ ok: true, data: { attestation: { id: 'ATST-FAIL', pass: false, results: [{ met: false }, { met: false }] } } }) }
+  }
+  const strict = makeServer()
+  const strictGate = gateWith(strict.server, { matchMode: 'any', cacheTtlSeconds: 0 })
+  assert.ok(paid(await strictGate.verify({ credential: cred() })), 'TTL 0 must re-check and charge')
+  assert.equal(seen.calls, 2, 'the TTL-0 route made its own call')
+})
+
+test('REGRESSION: a route honors its own shorter TTL over the writer\'s longer one', async () => {
+  const seen = stubPartial()
+  const realNow = Date.now
+  try {
+    const t0 = realNow()
+    Date.now = () => t0
+    assert.ok(free(await gateWith(makeServer().server, { cacheTtlSeconds: 3600 }).verify({ credential: cred() })))
+    Date.now = () => t0 + 120_000 // two minutes later
+    await gateWith(makeServer().server, { cacheTtlSeconds: 60 }).verify({ credential: cred() })
+    assert.equal(seen.calls, 2, 'a 60s route must not use a 2-minute-old entry')
+    await gateWith(makeServer().server, { cacheTtlSeconds: 3600 }).verify({ credential: cred() })
+    assert.equal(seen.calls, 2, 'the 3600s route still uses the fresh entry')
+  } finally {
+    Date.now = realNow
+  }
+})
+
 // --- normalizeProvenPayer ---------------------------------------------------
 
 test('normalizeProvenPayer resolves DIDs and bare EVM, rejects the ambiguous', () => {

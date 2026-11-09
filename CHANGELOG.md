@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.3 (2026-11-09)
+
+- Each route now judges a cached attestation by its own `cacheTtlSeconds`. The cache is shared by every gated route in the process, and an entry used to carry the expiry of the route that wrote it, so a route with a short TTL (or `0`, meaning check every time) could still grant free access on a pass another route had cached for longer. Entries now record when the attestation was made, and a route uses one only while it is younger than that route's own TTL; a TTL of `0` never reads the cache. Found in an internal security review after GHSA-jxpm-8jpg-38xc; it affects only setups with two or more gated routes on the same conditions and different `cacheTtlSeconds`.
+
 ## 3.2.2 (2026-11-09)
 
 - Fixes the attestation cache key ([GHSA-jxpm-8jpg-38xc](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jxpm-8jpg-38xc), low). The cache is shared by every gated route in the process, and its key held only the wallet and the conditions, while the cached result already had the route's `matchMode` applied. A wallet that passed an `'any'` route could then get free access on an `'all'` route with the same conditions until the entry expired (`cacheTtlSeconds`, default 300). The key now also holds `matchMode`, the wallet type and `apiBaseUrl`, so routes that differ in any of them never share an entry. Only setups with two or more gated routes on the same conditions and different `matchMode` were affected. Thanks to @zohuyhieuzo03 for the report.
