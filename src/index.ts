@@ -296,13 +296,27 @@ function conditionSortKey(c: Condition): string {
   return `${c.type}:${c.chainId}:${c.contractAddress.toLowerCase()}`
 }
 
-function cacheKey(address: string, conditions: Condition[]): string {
+/**
+ * The cache is shared by every gated route in the process, so the key holds
+ * everything that decides a cached `pass`: the wallet and its family, the
+ * conditions, the route's matchMode and the API it asked. Two routes that
+ * differ in any of these never share an entry.
+ */
+function cacheKey(
+  payer: { address: string; type: WalletType },
+  conditions: Condition[],
+  matchMode: 'any' | 'all',
+  apiBaseUrl: string,
+): string {
   const sorted = [...conditions].sort((a, b) => {
     const ka = conditionSortKey(a)
     const kb = conditionSortKey(b)
     return ka < kb ? -1 : ka > kb ? 1 : 0
   })
-  return `${address.toLowerCase()}:${JSON.stringify(sorted)}`
+  // Only EVM addresses are case-insensitive. Solana, XRPL and legacy Bitcoin
+  // addresses are not, so they are kept exactly as given.
+  const address = payer.type === 'evm' ? payer.address.toLowerCase() : payer.address
+  return JSON.stringify([payer.type, address, matchMode, apiBaseUrl, sorted])
 }
 
 /** Clear the in-memory ownership cache and the default replay store. Useful in tests. */
@@ -826,7 +840,7 @@ export function conditionGate(
 
   /** Attestation result for a payer, from the cache or a fresh call. Throws on API error. */
   async function evaluate(payer: { address: string; type: WalletType }) {
-    const key = cacheKey(payer.address, conditions)
+    const key = cacheKey(payer, conditions, matchMode, options.apiBaseUrl || 'https://api.insumermodel.com')
     const cached = cache.get(key)
     if (cached && cached.expiresAt > Date.now()) return cached
 

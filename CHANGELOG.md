@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.2.2 (2026-11-09)
+
+- Fixes the attestation cache key ([GHSA-jxpm-8jpg-38xc](https://github.com/insumerapi/mppx-condition-gate/security/advisories/GHSA-jxpm-8jpg-38xc), low). The cache is shared by every gated route in the process, and its key held only the wallet and the conditions, while the cached result already had the route's `matchMode` applied. A wallet that passed an `'any'` route could then get free access on an `'all'` route with the same conditions until the entry expired (`cacheTtlSeconds`, default 300). The key now also holds `matchMode`, the wallet type and `apiBaseUrl`, so routes that differ in any of them never share an entry. Only setups with two or more gated routes on the same conditions and different `matchMode` were affected. Thanks to @zohuyhieuzo03 for the report.
+- The cache keeps Solana, XRPL and Bitcoin addresses exactly as given. Only EVM addresses are lowercased, since only they are case-insensitive.
+
 ## 3.2.1 (2026-10-21)
 
 - README: on-chain key purchases and top-ups are USDC only (Ethereum, Base, Polygon, Arbitrum, Optimism, BNB Chain, Avalanche, Solana), and the paying wallet signs a short text naming the payment (`senderSignature`). USDT, Bitcoin and Tron are no longer accepted for purchases.

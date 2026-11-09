@@ -251,7 +251,7 @@ Either way, set `INSUMER_API_KEY` as an environment variable in your runtime.
 | `apiKey` | `string` | `env.INSUMER_API_KEY` | InsumerAPI key |
 | `conditions` | `Condition[]` | required | One or more conditions to evaluate |
 | `matchMode` | `'any' \| 'all'` | `'any'` | Wallet must satisfy any or all conditions |
-| `cacheTtlSeconds` | `number` | `300` | In-memory cache TTL |
+| `cacheTtlSeconds` | `number` | `300` | In-memory cache TTL. Entries are keyed by wallet, wallet type, conditions, `matchMode` and `apiBaseUrl` |
 | `apiBaseUrl` | `string` | `https://api.insumermodel.com` | API base URL override |
 | `provenPayer` | `(details) => ProvenPayer` | none | Returns the payer the method proved; required for free access |
 | `replayStore` | `AtomicStore` | bounded in-memory, per process | Records used credentials; must be atomic; share it across instances |

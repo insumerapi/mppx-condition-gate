@@ -536,6 +536,117 @@ test('the default lifetime cap is ten minutes', async () => {
   assert.ok(free(await gateFor(makeServer().server).verify({ credential: cred({ validBefore: inSeconds(590) }) })))
 })
 
+// --- Cache key (GHSA-jxpm-8jpg-38xc) ---------------------------------------
+
+const TWO_CONDITIONS = [
+  { type: 'token_balance', contractAddress: '0xTOKEN', chainId: 8453 },
+  { type: 'nft_ownership', contractAddress: '0xNFT', chainId: 8453 },
+]
+
+/**
+ * Stub /v1/attest where 1 of 2 conditions is met: `pass` is false, so the
+ * wallet fails an 'all' route and passes an 'any' route. Counts the calls and
+ * records each request body.
+ */
+function stubPartial() {
+  const seen = { calls: 0, bodies: [], urls: [] }
+  globalThis.fetch = async (url, init) => {
+    seen.calls++
+    seen.urls.push(String(url))
+    seen.bodies.push(JSON.parse(init.body))
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        data: { attestation: { id: `ATST-${seen.calls}`, pass: false, results: [{ met: true }, { met: false }] } },
+      }),
+    }
+  }
+  return seen
+}
+
+const gateWith = (server, extra) =>
+  conditionGate(server, { apiKey: 'k', conditions: TWO_CONDITIONS, provenPayer: (d) => d.payer, ...extra })
+
+test('an all-mode route charges a wallet that meets 1 of 2 conditions', async () => {
+  stubPartial()
+  const strict = makeServer()
+  assert.ok(paid(await gateWith(strict.server, { matchMode: 'all' }).verify({ credential: cred() })))
+  assert.equal(strict.calls.verify, 1)
+})
+
+test('REGRESSION: a pass cached by an any-mode route is not reused by an all-mode route with the same conditions', async () => {
+  const seen = stubPartial()
+
+  const loose = makeServer()
+  const looseGate = gateWith(loose.server, { matchMode: 'any' })
+  assert.ok(free(await looseGate.verify({ credential: cred() })), 'the any route passes and warms the cache')
+
+  const strict = makeServer()
+  const strictGate = gateWith(strict.server, { matchMode: 'all' })
+  const result = await strictGate.verify({ credential: cred() })
+  assert.ok(paid(result), `the all route must charge, got ${result.reference}`)
+  assert.equal(strict.calls.verify, 1)
+  assert.equal(seen.calls, 2, 'the all route makes its own attestation call')
+
+  // Both entries stay cached on their own key: neither route calls again.
+  assert.ok(free(await looseGate.verify({ credential: cred() })))
+  assert.ok(paid(await strictGate.verify({ credential: cred() })))
+  assert.equal(seen.calls, 2)
+})
+
+test('REGRESSION: a fail cached by an all-mode route does not block an any-mode route', async () => {
+  const seen = stubPartial()
+  assert.ok(paid(await gateWith(makeServer().server, { matchMode: 'all' }).verify({ credential: cred() })))
+  assert.ok(free(await gateWith(makeServer().server, { matchMode: 'any' }).verify({ credential: cred() })))
+  assert.equal(seen.calls, 2)
+})
+
+test('the default matchMode shares an entry with an explicit any', async () => {
+  const seen = stubPartial()
+  assert.ok(free(await gateWith(makeServer().server, {}).verify({ credential: cred() })))
+  assert.ok(free(await gateWith(makeServer().server, { matchMode: 'any' }).verify({ credential: cred() })))
+  assert.equal(seen.calls, 1)
+})
+
+test('the same address string under two wallet types does not share an entry', async () => {
+  const seen = stubPartial()
+  const asType = (type) =>
+    conditionGate(makeServer().server, {
+      apiKey: 'k', conditions: TWO_CONDITIONS, provenPayer: () => ({ address: 'SameString1', type }),
+    })
+  await asType('solana').verify({ credential: cred() })
+  await asType('bitcoin').verify({ credential: cred() })
+  assert.equal(seen.calls, 2)
+  assert.equal(seen.bodies[0].solanaWallet, 'SameString1')
+  assert.equal(seen.bodies[1].bitcoinWallet, 'SameString1')
+})
+
+test('case-sensitive addresses are not folded together; EVM addresses are', async () => {
+  const seen = stubPartial()
+  const as = (address, type) =>
+    conditionGate(makeServer().server, {
+      apiKey: 'k', conditions: TWO_CONDITIONS, provenPayer: () => ({ address, type }),
+    })
+  await as('SoLAddrAbc', 'solana').verify({ credential: cred() })
+  await as('soladdrabc', 'solana').verify({ credential: cred() })
+  assert.equal(seen.calls, 2, 'two Solana addresses differing only in case are two wallets')
+
+  await as('0xAbCdEf0000000000000000000000000000000001', 'evm').verify({ credential: cred() })
+  await as('0xabcdef0000000000000000000000000000000001', 'evm').verify({ credential: cred() })
+  assert.equal(seen.calls, 3, 'an EVM address in checksum and lower case is one wallet')
+})
+
+test('routes on different apiBaseUrl values do not share an entry', async () => {
+  const seen = stubPartial()
+  await gateWith(makeServer().server, { apiBaseUrl: 'https://a.example' }).verify({ credential: cred() })
+  await gateWith(makeServer().server, { apiBaseUrl: 'https://b.example' }).verify({ credential: cred() })
+  assert.equal(seen.calls, 2)
+  assert.ok(seen.urls[0].startsWith('https://a.example/'))
+  assert.ok(seen.urls[1].startsWith('https://b.example/'))
+})
+
 // --- normalizeProvenPayer ---------------------------------------------------
 
 test('normalizeProvenPayer resolves DIDs and bare EVM, rejects the ambiguous', () => {
